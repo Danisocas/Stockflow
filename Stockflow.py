@@ -3,6 +3,7 @@ import time
 from datos import STOCK_INICIAL, PEDIDOS, NUM_CAJAS
 
 inventario = STOCK_INICIAL.copy()
+lock_inventario = threading.Lock()
 
 ventas_por_caja = []
 
