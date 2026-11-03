@@ -67,7 +67,7 @@ def mostrar_resumen():
             print(" ERROR: condición de carrera")
 
     if not hay_errores:
-        print("No se detectó ningún error en esta ejecución. Ejecuta otra vez")
+        print("comprobacion correcta: el stock coincide con las ventas")
 
 
 hilos = []
