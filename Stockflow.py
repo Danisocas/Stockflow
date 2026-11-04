@@ -1,9 +1,11 @@
 import threading
 import time
-from datos import STOCK_INICIAL, PEDIDOS, NUM_CAJAS
+from datos import STOCK_INICIAL, PEDIDOS, NUM_CAJAS, NUM_TERMINALES
 
 inventario = STOCK_INICIAL.copy()
+
 lock_inventario = threading.Lock()
+terminales = threading.Semaphore(NUM_TERMINALES)
 
 ventas_por_caja = []
 
@@ -22,6 +24,7 @@ def trabajar_caja(numero_caja, pedidos_caja):
 
     for numero_pedido, producto, cantidad in pedidos_caja:
 
+        # Comprobar y descontar el stock
         with lock_inventario:
 
             stock_actual = inventario[producto]
@@ -33,21 +36,31 @@ def trabajar_caja(numero_caja, pedidos_caja):
                 venta_aceptada = False
 
         if venta_aceptada:
+
+            # Utilizar un terminal de cobro
+            with terminales:
+                print(f"Caja {numero_caja + 1}: obtiene terminal")
+
+                time.sleep(0.2)
+
+                print(f"Caja {numero_caja + 1}: libera terminal")
+
             ventas_por_caja[numero_caja].append((producto, cantidad))
 
             print(
                 f"Caja {numero_caja + 1}: vende {numero_pedido} ({cantidad} de {producto})"
             )
+
         else:
             print(f"Caja {numero_caja + 1}: rechaza {numero_pedido} por falta de stock")
 
 
-# RESUMEN
+# RESUMEN FINAL
 def mostrar_resumen():
 
     print("\n--- RESUMEN FINAL ---")
-    print()
     hay_errores = False
+
     for producto in STOCK_INICIAL:
         vendido = 0
 
@@ -64,15 +77,16 @@ def mostrar_resumen():
 
         if stock_real != stock_esperado or stock_esperado < 0:
             hay_errores = True
-            print(" ERROR: condición de carrera")
+            print("ERROR: el stock no es correcto")
 
     if not hay_errores:
-        print("comprobacion correcta: el stock coincide con las ventas")
+        print("comprobación correcta: el stock coincide con las ventas")
 
 
 hilos = []
 
 for numero_caja in range(NUM_CAJAS):
+
     pedidos_caja = pedidos_ordenados[numero_caja::NUM_CAJAS]
 
     hilo = threading.Thread(target=trabajar_caja, args=(numero_caja, pedidos_caja))
@@ -83,5 +97,6 @@ for numero_caja in range(NUM_CAJAS):
 
 for hilo in hilos:
     hilo.join()
+
 
 mostrar_resumen()
