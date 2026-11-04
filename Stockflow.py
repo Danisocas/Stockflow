@@ -6,6 +6,7 @@ inventario = STOCK_INICIAL.copy()
 
 lock_inventario = threading.Lock()
 terminales = threading.Semaphore(NUM_TERMINALES)
+condicion = threading.Condition(lock_inventario)
 
 ventas_por_caja = []
 
