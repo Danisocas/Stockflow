@@ -1,12 +1,14 @@
 import threading
 import time
-from datos import STOCK_INICIAL, PEDIDOS, NUM_CAJAS, NUM_TERMINALES
+from datos import STOCK_INICIAL, PEDIDOS, NUM_CAJAS, NUM_TERMINALES, REPOSICIONES
 
 inventario = STOCK_INICIAL.copy()
 
 lock_inventario = threading.Lock()
 terminales = threading.Semaphore(NUM_TERMINALES)
 condicion = threading.Condition(lock_inventario)
+
+reposiciones_terminadas = False
 
 ventas_por_caja = []
 
@@ -26,12 +28,13 @@ def trabajar_caja(numero_caja, pedidos_caja):
     for numero_pedido, producto, cantidad in pedidos_caja:
 
         # Comprobar y descontar el stock
-        with lock_inventario:
+        with condicion:
+            while inventario[producto] < cantidad and not reposiciones_terminadas:
+                print(f"Caja {numero_caja + 1}: esperando stock de {producto}")
+                condicion.wait()
 
-            stock_actual = inventario[producto]
-
-            if stock_actual >= cantidad:
-                inventario[producto] = stock_actual - cantidad
+            if inventario[producto] >= cantidad:
+                inventario[producto] -= cantidad
                 venta_aceptada = True
             else:
                 venta_aceptada = False
@@ -56,14 +59,35 @@ def trabajar_caja(numero_caja, pedidos_caja):
             print(f"Caja {numero_caja + 1}: rechaza {numero_pedido} por falta de stock")
 
 
+
+def trabajar_almacen():
+    global reposiciones_terminadas
+
+    for alb, producto, cantidad in REPOSICIONES:
+        with condicion:
+            inventario[producto] += cantidad
+            condicion.notify_all()
+
+        print(f"Almcen repone {cantidad} unidades de {producto}")
+
+    with condicion:
+        reposiciones_terminadas = True
+        condicion.notify_all()
+
+    print("Almacén: reposiciones terminadas")
+
+
+
 # RESUMEN FINAL
 def mostrar_resumen():
 
     print("\n--- RESUMEN FINAL ---")
+    print()
     hay_errores = False
 
     for producto in STOCK_INICIAL:
         vendido = 0
+        repuesto = 0
 
         for ventas_caja in ventas_por_caja:
             for producto_vendido, cantidad in ventas_caja:
@@ -71,7 +95,12 @@ def mostrar_resumen():
                 if producto_vendido == producto:
                     vendido += cantidad
 
-        stock_esperado = STOCK_INICIAL[producto] - vendido
+
+        for alb, producto_repuesto, cantidad in REPOSICIONES:
+            if producto_repuesto == producto:
+                repuesto += cantidad
+        
+        stock_esperado = STOCK_INICIAL[producto] + repuesto - vendido
         stock_real = inventario[producto]
 
         print(f"{producto}: real={stock_real}, esperado={stock_esperado}")
@@ -96,8 +125,16 @@ for numero_caja in range(NUM_CAJAS):
     hilo.start()
 
 
+
+# Crear e iniciar el hilo
+
+hilo_almacen = threading.Thread(target=trabajar_almacen)
+hilo_almacen.start()
+
 for hilo in hilos:
     hilo.join()
+
+hilo_almacen.join()
 
 
 mostrar_resumen()
