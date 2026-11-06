@@ -1,27 +1,57 @@
-
 import threading
 import time
 from datos import STOCK_INICIAL, PEDIDOS, REPOSICIONES, NUM_CAJAS, NUM_TERMINALES, NUM_REVISORES
 
+class GestorInventario:
 
-# VARIABLES COMPARTIDAS
+    def __init__(self):
+        self.stock = STOCK_INICIAL.copy()
+        self.cerrojo = threading.RLock()
+        self.condicion = threading.Condition(self.cerrojo)
+        self.reposiciones_terminadas = False
 
-inventario = STOCK_INICIAL.copy()
+    def consultar_stock(self, producto):
+        with self.cerrojo:
+            return self.stock[producto]
 
-lock_inventario = threading.Lock()
+    def vender(self, producto, cantidad):
+
+        with self.condicion:
+
+            while (self.consultar_stock(producto) < cantidad and not self.reposiciones_terminadas):
+                print(f"Esperando stock de {producto}")
+                self.condicion.wait()
+
+            if self.consultar_stock(producto) >= cantidad:
+                self.stock[producto] -= cantidad
+                return True
+            else:
+                return False
+
+    def reponer(self, producto, cantidad):
+
+        with self.condicion:
+            self.stock[producto] += cantidad
+            self.condicion.notify_all()
+
+    def terminar_reposiciones(self):
+
+        with self.condicion:
+            self.reposiciones_terminadas = True
+            self.condicion.notify_all()
+
+
+
+gestor = GestorInventario()
+
 terminales = threading.Semaphore(NUM_TERMINALES)
-condicion = threading.Condition(lock_inventario)
 barrera = threading.Barrier(NUM_REVISORES)
-
-reposiciones_terminadas = False
 
 ventas_por_caja = []
 
 for i in range(NUM_CAJAS):
     ventas_por_caja.append([])
 
-
-# ORDENAR LOS PEDIDOS
 
 def obtener_producto(pedido):
     return pedido[1]
@@ -30,32 +60,16 @@ def obtener_producto(pedido):
 pedidos_ordenados = sorted(PEDIDOS, key=obtener_producto)
 
 
-# FUNCION DE LAS CAJAS
-
+# CAJAS
 def trabajar_caja(numero_caja, pedidos_caja):
 
     for numero_pedido, producto, cantidad in pedidos_caja:
 
-        with condicion:
-
-            while inventario[producto] < cantidad and not reposiciones_terminadas:
-
-                print(f"Caja {numero_caja + 1}: esperando stock de {producto}")
-
-                condicion.wait()
-
-            if inventario[producto] >= cantidad:
-
-                inventario[producto] -= cantidad
-                venta_aceptada = True
-
-            else:
-                venta_aceptada = False
+        venta_aceptada = gestor.vender(producto, cantidad)
 
         if venta_aceptada:
 
             with terminales:
-
                 print(f"Caja {numero_caja + 1}: obtiene terminal")
 
                 time.sleep(0.2)
@@ -70,41 +84,28 @@ def trabajar_caja(numero_caja, pedidos_caja):
             )
 
         else:
-
             print(
-                f"Caja {numero_caja + 1}: rechaza pedido {numero_pedido} "
-                f"por falta de stock"
+                f"Caja {numero_caja + 1}: rechaza pedido "
+                f"{numero_pedido} por falta de stock"
             )
 
-
-# FUNCION DEL ALMACEN
+# ALMACEN
 
 def trabajar_almacen():
 
-    global reposiciones_terminadas
-
     for albaran, producto, cantidad in REPOSICIONES:
 
-        with condicion:
-
-            inventario[producto] += cantidad
-
-            condicion.notify_all()
+        gestor.reponer(producto, cantidad)
 
         print(f"Almacén repone {cantidad} unidades de {producto}")
 
         time.sleep(0.1)
 
-    with condicion:
-
-        reposiciones_terminadas = True
-
-        condicion.notify_all()
+    gestor.terminar_reposiciones()
 
     print("Almacén: reposiciones terminadas")
 
 
-# FEATURE 5 - REVISION DEL INVENTARIO
 
 def revisar_inventario(numero_revisor, productos_revisor):
 
@@ -112,18 +113,12 @@ def revisar_inventario(numero_revisor, productos_revisor):
 
     for producto in productos_revisor:
 
-        with lock_inventario:
-
-            stock_actual = inventario[producto]
+        stock_actual = gestor.consultar_stock(producto)
 
         if stock_actual < 0:
-
-            print(
-                f"Revisor {numero_revisor + 1}: ERROR en {producto}"
-            )
+            print(f"Revisor {numero_revisor + 1}: ERROR en {producto}")
 
         else:
-
             print(
                 f"Revisor {numero_revisor + 1}: "
                 f"{producto} tiene {stock_actual} unidades"
@@ -135,8 +130,6 @@ def revisar_inventario(numero_revisor, productos_revisor):
 
     print(f"Revisor {numero_revisor + 1}: revisión completada")
 
-
-# RESUMEN FINAL
 
 def mostrar_resumen():
 
@@ -151,7 +144,6 @@ def mostrar_resumen():
         repuesto = 0
 
         for ventas_caja in ventas_por_caja:
-
             for producto_vendido, cantidad in ventas_caja:
 
                 if producto_vendido == producto:
@@ -164,18 +156,16 @@ def mostrar_resumen():
 
         stock_esperado = STOCK_INICIAL[producto] + repuesto - vendido
 
-        stock_real = inventario[producto]
+        stock_real = gestor.consultar_stock(producto)
 
         print(f"{producto}: real={stock_real}, esperado={stock_esperado}")
 
         if stock_real != stock_esperado or stock_esperado < 0:
-
             hay_errores = True
-
             print("ERROR: el stock no es correcto")
 
     if not hay_errores:
-
+        print()
         print("Comprobación correcta: el stock coincide con las ventas")
 
 
@@ -196,14 +186,11 @@ for numero_caja in range(NUM_CAJAS):
     hilo.start()
 
 
-# INICIAR EL ALMACEN
-
+# Iniciar el amacen
 hilo_almacen = threading.Thread(target=trabajar_almacen)
-
 hilo_almacen.start()
 
 
-# ESPERAR A QUE TERMINEN LAS CAJAS Y EL ALMACEN
 
 for hilo in hilos:
     hilo.join()
@@ -211,7 +198,7 @@ for hilo in hilos:
 hilo_almacen.join()
 
 
-# FEATURE 5 - INICIAR LOS REVISORES
+# iniciar los cuatro revisores
 
 productos = list(STOCK_INICIAL.keys())
 
@@ -230,10 +217,10 @@ for numero_revisor in range(NUM_REVISORES):
     hilo.start()
 
 
+# ESPERAR A LOS REVISORES
 for hilo in hilos_revisores:
     hilo.join()
 
 
-# MOSTRAR EL RESUMEN FINAL
-
+# ver los resultados
 mostrar_resumen()
